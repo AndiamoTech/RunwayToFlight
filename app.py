@@ -1,8 +1,16 @@
 # app.py
-from fastapi import FastAPI, HTTPException
+import os
+from typing import List, Optional
+
+from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
+
 from RunwayToLiftoff import compute, build_outputs, coerce_date
 
+
+# -----------------------------
+# Models
+# -----------------------------
 class Payload(BaseModel):
     company_name: str
     formation_date: str           # "YYYY-MM" or "YYYY-MM-DD"
@@ -17,17 +25,55 @@ class Payload(BaseModel):
     loan_cash: float
     accent_colors: str = "#12c04c"
 
+
+# -----------------------------
+# Auth helper
+# -----------------------------
+def _load_api_keys() -> List[str]:
+    """
+    Read RUNWAY_API_KEY from environment.
+    Accepts a single key or comma-separated list.
+    Whitespace around commas is ignored.
+    """
+    raw = os.getenv("RUNWAY_API_KEY", "").strip()
+    if not raw:
+        return []
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
+def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
+    """
+    Dependency that enforces x-api-key when RUNWAY_API_KEY is set.
+    If no key(s) configured, endpoint remains open (useful during initial setup).
+    """
+    allowed = _load_api_keys()
+    if not allowed:
+        return  # No keys configured → allow (you can flip this to block if preferred)
+
+    if not x_api_key or x_api_key not in allowed:
+        raise HTTPException(status_code=401, detail="Invalid or missing x-api-key")
+
+
+# -----------------------------
+# App
+# -----------------------------
 app = FastAPI(title="RunwayToFlight API", version="0.1.0")
+
 
 @app.get("/")
 def home():
-    return {"message": "RunwayToFlight API is live 🚀 — POST /runway with JSON. See /docs for Swagger UI."}
+    return {
+        "message": "RunwayToFlight API is live 🚀 — POST /runway with JSON. See /docs for Swagger UI.",
+        "auth": "Send x-api-key header if RUNWAY_API_KEY is configured.",
+    }
+
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-@app.post("/runway")
+
+@app.post("/runway", dependencies=[Depends(require_api_key)])
 def runway(p: Payload):
     try:
         data = p.model_dump()
