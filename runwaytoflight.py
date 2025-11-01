@@ -1,4 +1,4 @@
-# runwaytoflight.py — RunwayToFlight v3.3 (FINAL)
+# runwaytoflight.py — RunwayToFlight v3.3.1 (FIXED)
 # Founder Runway & Liftoff Planner
 # Two clean sections:
 #   1) Image-generation prompt (blueprint style) with ✅/❌ midline
@@ -38,7 +38,7 @@ def coerce_date(s):
         try:
             dt = datetime.strptime(s, fmt)
             if fmt == "%Y-%m":
-                dt = datetime(dt.year, dt.month, 1)  # normalize to first of month
+                dt = datetime(dt.year, dt.month, 1)
             return dt.strftime("%Y-%m-%d")
         except:
             pass
@@ -59,21 +59,15 @@ def normalize_hex(c):
 
 # ----------------- Simulation -----------------
 def simulate_operational_breakeven(mrr0, mrc0, g_pct, cg_pct, cash0, max_months=240, seed_mrr=0.0):
-    """
-    Month-by-month compounding of MRR and costs.
-    Tracks funding injections when cash dips below 0.
-    Returns: dict with path + first month where MRR >= MRC (operational breakeven).
-    """
     g, cg = g_pct / 100.0, cg_pct / 100.0
     mrr = mrr0 if mrr0 > 0 else seed_mrr
     mrc = mrc0
     cash = cash0
     funding_gap = 0.0
-    timeline = []
 
     if mrr >= mrc:
         return dict(month=0, date=add_months(date.today(), 0).isoformat(),
-                    funding_gap=0.0, unreachable=False, cash=cash, timeline=[])
+                    funding_gap=0.0, unreachable=False, cash=cash)
 
     for m in range(1, max_months + 1):
         mrr *= (1 + g)
@@ -83,25 +77,17 @@ def simulate_operational_breakeven(mrr0, mrc0, g_pct, cg_pct, cash0, max_months=
         if cash < 0:
             funding_gap += -cash
             cash = 0.0
-        timeline.append((m, mrr, mrc, net, cash, funding_gap))
         if mrr >= mrc:
             return dict(month=m, date=add_months(date.today(), m).isoformat(),
-                        funding_gap=round(funding_gap, 2), unreachable=False,
-                        cash=cash, timeline=timeline)
-
+                        funding_gap=round(funding_gap, 2), unreachable=False, cash=cash)
         if funding_gap > MAX_FUNDING_CAP:
             break
 
-    return dict(month=None, date="N/A", funding_gap=min(funding_gap, float(MAX_FUNDING_CAP)),
-                unreachable=True, cash=cash, timeline=timeline)
+    return dict(month=None, date="N/A",
+                funding_gap=min(funding_gap, float(MAX_FUNDING_CAP)),
+                unreachable=True, cash=cash)
 
 def simulate_cash_breakeven(mrr0, mrc0, g_pct, cg_pct, cash0, max_months=240, seed_mrr=0.0):
-    """
-    Cash breakeven = cumulative cash (including any injections to avoid negative)
-    returns to >= starting level with zero ongoing funding requirement.
-    We track injections (funding_gap) whenever cash would drop below zero.
-    Returns dict with operational month, cash month, and funding needed to reach cash breakeven.
-    """
     g, cg = g_pct / 100.0, cg_pct / 100.0
     mrr = mrr0 if mrr0 > 0 else seed_mrr
     mrc = mrc0
@@ -122,14 +108,11 @@ def simulate_cash_breakeven(mrr0, mrc0, g_pct, cg_pct, cash0, max_months=240, se
         if op_month is None and mrr >= mrc:
             op_month = m
 
-        # Cash breakeven: company has repaid cumulative deficits and stands on cash >= start level
         if op_month is not None and funding_gap == 0.0 and cash >= start_cash_level:
-            return dict(op_month=op_month,
-                        cash_month=m,
+            return dict(op_month=op_month, cash_month=m,
                         date=add_months(date.today(), m).isoformat(),
                         funding_gap=round(funding_gap, 2),
-                        unreachable=False,
-                        cash=cash)
+                        unreachable=False, cash=cash)
 
         if funding_gap > MAX_FUNDING_CAP:
             break
@@ -139,7 +122,6 @@ def simulate_cash_breakeven(mrr0, mrc0, g_pct, cg_pct, cash0, max_months=240, se
                 unreachable=True, cash=cash)
 
 def simulate_survival_raise(mrr0, mrc0, g_pct, cg_pct, cash0, months, seed_mrr=0.0):
-    """Funding required to survive exactly `months` months (not necessarily to breakeven)."""
     g, cg = g_pct / 100.0, cg_pct / 100.0
     mrr = mrr0 if mrr0 > 0 else seed_mrr
     mrc = mrc0
@@ -159,7 +141,6 @@ def simulate_survival_raise(mrr0, mrc0, g_pct, cg_pct, cash0, months, seed_mrr=0
 
 # ----------------- Solvers (alternatives) -----------------
 def solve_growth_for_zero_funding(mrr0, mrc0, cost_growth_pct, cash0, max_months=240, seed_mrr=0.0):
-    """Minimum monthly MRR growth % that yields zero funding gap (to operational breakeven)."""
     lo, hi = 0.0, 200.0
     if simulate_operational_breakeven(mrr0, mrc0, hi, cost_growth_pct, cash0, max_months, seed_mrr)['funding_gap'] > 0:
         return None
@@ -173,7 +154,6 @@ def solve_growth_for_zero_funding(mrr0, mrc0, cost_growth_pct, cash0, max_months
     return round(hi, 2)
 
 def solve_cost_cut_for_zero_funding(mrr0, mrc0, growth_pct, cost_growth_pct, cash0, max_months=240, seed_mrr=0.0):
-    """Minimum % immediate cost cut (of current MRC) to yield zero funding gap given growth % (to operational breakeven)."""
     lo, hi = 0.0, 0.9
     if simulate_operational_breakeven(mrr0, mrc0*(1-hi), growth_pct, cost_growth_pct, cash0, max_months, seed_mrr)['funding_gap'] > 0:
         return None
@@ -209,18 +189,13 @@ def compute(d):
     op_res = simulate_operational_breakeven(mrr, mrc, g, cg, cash_pool, max_months=240, seed_mrr=seed_mrr)
     cash_res = simulate_cash_breakeven(mrr, mrc, g, cg, cash_pool, max_months=240, seed_mrr=seed_mrr)
 
-    # Cumulative deficit accounting at operational vs cash breakeven
-    # cumulative_deficit_op = initial cash + injections − cash at op breakeven moment
-    # At cash breakeven, funding_gap should be 0 by definition; we still report prior injections if any.
     cumulative_deficit_op = (cash_pool + op_res['funding_gap'] - op_res['cash']) if op_res['month'] is not None else None
     cumulative_deficit_cash = (cash_pool + cash_res['funding_gap'] - cash_res['cash']) if cash_res['cash_month'] is not None else None
 
-    # Snapshot burn multiple now (if last_mrr > 0)
     net_new_arr_now = max((mrr - last_mrr) * 12, 0)
     burn_multiple_now = None if net_new_arr_now == 0 else (net_burn * 12) / net_new_arr_now
 
     survival_raise, _ = simulate_survival_raise(mrr, mrc, g, cg, cash_pool, DEFAULT_TARGET_RUNWAY_MONTHS, seed_mrr=seed_mrr)
-    # Recommend raise vs operational breakeven by default (more conservative CEOs may choose cash breakeven target)
     funding_gap_target = op_res['funding_gap'] if op_res['month'] is not None else cash_res['funding_gap']
     recommended_raise = math.ceil(max(funding_gap_target, survival_raise) * (1 + DEFAULT_RAISE_BUFFER_PCT/100.0))
 
@@ -301,13 +276,18 @@ COPY/PASTE INTO YOUR IMAGE GENERATOR — END""".strip()
     run = "∞ (cash covers burn)" if c["runway_static"] is None else f"{c['runway_static']} mo"
     bm_now = "n/a" if c["burn_multiple"] is None else f"{c['burn_multiple']}x"
 
-    extra = [
-        f"Operational Breakeven: {('N/A' if c['op_breakeven_months'] is None else f'{c['op_breakeven_months']} mo ({c['op_breakeven_date']})')}",
-        f"Cash Breakeven: {('N/A' if c['cash_breakeven_months'] is None else f'{c['cash_breakeven_months']} mo ({c['cash_breakeven_date']})')}",
-        f"Cumulative Deficit @ Operational: ${money(c['cumulative_deficit_op'])}" if c['cumulative_deficit_op'] is not None else "",
-        f"Cumulative Deficit @ Cash: ${money(c['cumulative_deficit_cash'])}" if c['cumulative_deficit_cash'] is not None else "",
+    op_text = "N/A" if c["op_breakeven_months"] is None else f"{c['op_breakeven_months']} mo ({c['op_breakeven_date']})"
+    cash_text = "N/A" if c["cash_breakeven_months"] is None else f"{c['cash_breakeven_months']} mo ({c['cash_breakeven_date']})"
+
+    extra_lines = [
+        f"Operational Breakeven: {op_text}",
+        f"Cash Breakeven: {cash_text}",
     ]
-    extra = "\n".join([e for e in extra if e])
+    if c['cumulative_deficit_op'] is not None:
+        extra_lines.append(f"Cumulative Deficit @ Operational: ${money(c['cumulative_deficit_op'])}")
+    if c['cumulative_deficit_cash'] is not None:
+        extra_lines.append(f"Cumulative Deficit @ Cash: ${money(c['cumulative_deficit_cash'])}")
+    extra = "\n".join(extra_lines)
 
     summary = f"""🚀 RUN SUMMARY — {company}
 ────────────────────────────────────────────
