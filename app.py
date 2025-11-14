@@ -1,12 +1,12 @@
-# app.py — RunwayToFlight API v3.3
+# app.py — RunwayToFlight API v3.5
 import os
 from typing import List, Optional
+from datetime import datetime, date
 
 from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
 
-# Updated import: matches new filename and functions
-from runwaytoflight import compute, build_outputs, coerce_date
+from runwaytoflight import compute, build_prompt, build_summary, coerce_date
 
 
 # -----------------------------
@@ -24,8 +24,10 @@ class Payload(BaseModel):
     external_equity_cash: float
     grant_cash: float
     loan_cash: float
-    seed_mrr: float = 0.0
+    loan_apr_pct: float = 3.0
+    loan_term_years: float = 3.0
     accent_colors: str = "#12c04c"
+    start_date: Optional[str] = None  # Optional base date for simulation
 
 
 # -----------------------------
@@ -45,21 +47,40 @@ def _load_api_keys() -> List[str]:
 
 def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
     """
-    Dependency that enforces x-api-key when RUNWAY_API_KEY is set.
-    If no key(s) configured, endpoint remains open (useful during initial setup).
+    Enforce x-api-key when RUNWAY_API_KEY is set.
+    If no key(s) configured, endpoint remains open.
     """
     allowed = _load_api_keys()
     if not allowed:
-        return  # No keys configured → allow (can flip this to block if preferred)
+        return
 
     if not x_api_key or x_api_key not in allowed:
         raise HTTPException(status_code=401, detail="Invalid or missing x-api-key")
 
 
 # -----------------------------
+# Helpers
+# -----------------------------
+def _parse_base_date(start: Optional[str]) -> Optional[date]:
+    """
+    Map optional start_date string → date, using the same coerce_date
+    behavior as the CLI. If None or invalid, return None and let
+    runwaytoflight fall back internally.
+    """
+    if not start:
+        return None
+    try:
+        norm = coerce_date(start)           # normalize YYYY-MM → YYYY-MM-01
+        dt = datetime.strptime(norm, "%Y-%m-%d")
+        return dt.date()
+    except Exception:
+        return None
+
+
+# -----------------------------
 # App
 # -----------------------------
-app = FastAPI(title="RunwayToFlight API", version="3.3.0")
+app = FastAPI(title="RunwayToFlight API", version="3.4.0")
 
 
 @app.get("/")
@@ -67,7 +88,7 @@ def home():
     return {
         "message": "RunwayToFlight API is live 🚀 — POST /runway with JSON. See /docs for Swagger UI.",
         "auth": "Send x-api-key header if RUNWAY_API_KEY is configured.",
-        "version": "3.3.0"
+        "version": "3.4.0",
     }
 
 
@@ -80,13 +101,18 @@ def health():
 def runway(p: Payload):
     """
     Compute runway, breakeven, and funding gap metrics.
-    Returns the same structure as CLI: prompt, summary, and raw calculation dictionary.
+    Returns: prompt, summary, and raw calculation dictionary.
     """
     try:
         data = p.model_dump()
+        # Normalize formation date
         data["formation_date"] = coerce_date(data["formation_date"])
-        calc = compute(data)
-        prompt, summary = build_outputs(data, calc)
+        # Convert optional start_date → base_date for the simulator
+        base_date = _parse_base_date(data.pop("start_date", None))
+
+        calc = compute(data, base_date=base_date)
+        prompt = build_prompt(data, calc)
+        summary = build_summary(calc)
         return {"prompt": prompt, "summary": summary, "calc": calc}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
