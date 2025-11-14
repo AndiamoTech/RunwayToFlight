@@ -1,7 +1,6 @@
-# app.py — RunwayToFlight API v3.5
+# app.py — RunwayToFlight API v3.5.1
 import os
 from typing import List, Optional
-from datetime import datetime, date
 
 from fastapi import FastAPI, HTTPException, Header, Depends
 from pydantic import BaseModel
@@ -59,28 +58,9 @@ def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
 
 
 # -----------------------------
-# Helpers
-# -----------------------------
-def _parse_base_date(start: Optional[str]) -> Optional[date]:
-    """
-    Map optional start_date string → date, using the same coerce_date
-    behavior as the CLI. If None or invalid, return None and let
-    runwaytoflight fall back internally.
-    """
-    if not start:
-        return None
-    try:
-        norm = coerce_date(start)           # normalize YYYY-MM → YYYY-MM-01
-        dt = datetime.strptime(norm, "%Y-%m-%d")
-        return dt.date()
-    except Exception:
-        return None
-
-
-# -----------------------------
 # App
 # -----------------------------
-app = FastAPI(title="RunwayToFlight API", version="3.4.0")
+app = FastAPI(title="RunwayToFlight API", version="3.5.0")
 
 
 @app.get("/")
@@ -88,7 +68,7 @@ def home():
     return {
         "message": "RunwayToFlight API is live 🚀 — POST /runway with JSON. See /docs for Swagger UI.",
         "auth": "Send x-api-key header if RUNWAY_API_KEY is configured.",
-        "version": "3.4.0",
+        "version": "3.5.0",
     }
 
 
@@ -105,12 +85,16 @@ def runway(p: Payload):
     """
     try:
         data = p.model_dump()
+
         # Normalize formation date
         data["formation_date"] = coerce_date(data["formation_date"])
-        # Convert optional start_date → base_date for the simulator
-        base_date = _parse_base_date(data.pop("start_date", None))
 
-        calc = compute(data, base_date=base_date)
+        # Optional base date string (YYYY-MM or YYYY-MM-DD)
+        base_date_str = data.pop("start_date", None)
+
+        # Pass through to runwaytoflight.compute (which expects base_date_str)
+        calc = compute(data, base_date_str=base_date_str)
+
         prompt = build_prompt(data, calc)
         summary = build_summary(calc)
         return {"prompt": prompt, "summary": summary, "calc": calc}
